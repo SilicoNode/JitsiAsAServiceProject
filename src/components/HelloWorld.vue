@@ -1,43 +1,265 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref, reactive, nextTick } from 'vue';
 
-defineProps({
-  msg: String,
-})
+const container = ref(null);
+const showMeeting = ref(false);
 
-const count = ref(0)
+// Reactive form data for login
+const formData = reactive({
+  name: '',
+  email: '',
+  room: 'dynamic-room-123'
+});
+
+// Function to start the Jitsi meeting with a JWT (authenticated, moderator privileges)
+const startJitsi = async () => {
+  try {
+    const payload = {
+      name: formData.name,
+      email: formData.email,
+      room: formData.room,
+    };
+
+    const response = await fetch("http://localhost:5001/generate-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    // If the response isn't OK, log error and display a message
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Backend error:", errorData.error);
+      alert(errorData.error);
+      return; // Do not join the meeting
+    }
+
+    const data = await response.json();
+    const jwtToken = data.token;
+
+    if (!jwtToken) {
+      console.error("Failed to get JWT");
+      alert("Failed to get JWT. Please try again later.");
+      return;
+    }
+
+    console.log("JWT received:", jwtToken);
+
+    // Show the meeting container and wait for DOM update.
+    showMeeting.value = true;
+    await nextTick();
+
+    // Initialize Jitsi with JWT (authenticated with moderator privileges).
+    new window.JitsiMeetExternalAPI("8x8.vc", {
+      roomName:
+        "vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/" + formData.room,
+      parentNode: container.value,
+      jwt: jwtToken,
+    });
+  } catch (error) {
+    console.error("Error fetching JWT:", error);
+    alert("An unexpected error occurred. Please try again.");
+  }
+};
+
+// Function to join anonymously.
+// This function sends a request with a dummy email so that the backend checks if the room exists.
+const joinAnonymously = async () => {
+  // Check if the room field is empty; if so, prompt for a room name.
+  if (!formData.room.trim()) {
+    const userRoom = prompt("Please enter the room name you want to join:");
+    if (userRoom && userRoom.trim()) {
+      formData.room = userRoom.trim();
+    } else {
+      alert("Room name is required to join anonymously.");
+      return;
+    }
+  }
+
+  // Prepare payload using a dummy email for anonymous users.
+  const payload = {
+    name: "Anonymous",
+    email: "anonymous@example.com",
+    room: formData.room,
+  };
+
+  try {
+    const response = await fetch("http://localhost:5001/generate-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Backend error:", errorData.error);
+      alert(errorData.error);
+      return;
+    }
+
+    const data = await response.json();
+    const jwtToken = data.token;
+    if (!jwtToken) {
+      alert("Failed to get token. Please try again.");
+      return;
+    }
+
+    console.log("JWT received (anonymous):", jwtToken);
+
+    // Show the meeting container and wait for DOM update.
+    showMeeting.value = true;
+    await nextTick();
+
+    // Initialize Jitsi with the token from backend for anonymous join.
+    new window.JitsiMeetExternalAPI("8x8.vc", {
+      roomName:
+        "vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/" + formData.room,
+      parentNode: container.value,
+      jwt: jwtToken,
+    });
+  } catch (error) {
+    console.error("Error joining anonymously:", error);
+    alert("An error occurred. Please try again.");
+  }
+};
+
+// Handle form submission for authenticated join.
+const handleSubmit = (e) => {
+  e.preventDefault();
+  // If room is empty, generate a default room name
+  if (!formData.room.trim()) {
+    formData.room = 'room-' + Math.random().toString(36).substring(2, 10);
+  }
+  startJitsi();
+};
+
+onMounted(() => {
+  // Load the Jitsi external API script if not already loaded.
+  if (!window.JitsiMeetExternalAPI) {
+    const script = document.createElement("script");
+    script.src =
+      "https://8x8.vc/vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/external_api.js";
+    script.async = true;
+    script.onload = () => console.log("Jitsi external API loaded.");
+    document.head.appendChild(script);
+  }
+});
 </script>
 
 <template>
-  <h1>{{ msg }}</h1>
+  <div class="page-container">
+    <!-- Login form displayed before joining the meeting -->
+    <div v-if="!showMeeting" class="login-form">
+      <h2>Join Meeting</h2>
+      <form @submit="handleSubmit">
+        <div class="form-group">
+          <label for="name">Name:</label>
+          <input type="text" v-model="formData.name" id="name" required />
+        </div>
+        <div class="form-group">
+          <label for="email">Email:</label>
+          <input type="email" v-model="formData.email" id="email" required />
+        </div>
+        <div class="form-group">
+          <label for="room">Room:</label>
+          <input type="text" v-model="formData.room" id="room" placeholder="Enter room name" required />
+        </div>
+        <button type="submit">Join Meeting as Authenticated User</button>
+      </form>
+      <div class="anonymous-link">
+        <a href="#" @click.prevent="joinAnonymously()">Join anonymously?</a>
+      </div>
+    </div>
 
-  <div class="card">
-    <button type="button" @click="count++">count is {{ count }}</button>
-    <p>
-      Edit
-      <code>components/HelloWorld.vue</code> to test HMR
-    </p>
+    <!-- Jitsi container displayed after the meeting starts -->
+    <div v-else ref="container" class="jaas-container"></div>
   </div>
-
-  <p>
-    Check out
-    <a href="https://vuejs.org/guide/quick-start.html#local" target="_blank"
-      >create-vue</a
-    >, the official Vue + Vite starter
-  </p>
-  <p>
-    Learn more about IDE Support for Vue in the
-    <a
-      href="https://vuejs.org/guide/scaling-up/tooling.html#ide-support"
-      target="_blank"
-      >Vue Docs Scaling up Guide</a
-    >.
-  </p>
-  <p class="read-the-docs">Click on the Vite and Vue logos to learn more</p>
 </template>
 
 <style scoped>
-.read-the-docs {
-  color: #888;
+/* Full page container for centering content */
+.page-container {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #eef2f5;
+  padding: 20px;
+}
+
+/* Styled login form */
+.login-form {
+  background: #ffffff;
+  padding: 30px 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  width: 400px;
+  text-align: center;
+}
+
+.login-form h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.form-group {
+  margin-bottom: 15px;
+  text-align: left;
+}
+
+.login-form label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+  color: #555;
+}
+
+.login-form input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.login-form button {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 4px;
+  background: #007bff;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.login-form button:hover {
+  background: #0056b3;
+}
+
+/* Anonymous join link styling */
+.anonymous-link {
+  margin-top: 15px;
+  font-size: 0.9rem;
+}
+
+.anonymous-link a {
+  color: #007bff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.anonymous-link a:hover {
+  text-decoration: underline;
+}
+
+/* Jitsi container styling */
+.jaas-container {
+  height: 100vh;
+  width: 100%;
+  min-width: 1200px;
+  margin: 0 auto;
+  padding: 0;
 }
 </style>
