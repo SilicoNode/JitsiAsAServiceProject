@@ -8,10 +8,10 @@ const showMeeting = ref(false);
 const formData = reactive({
   name: '',
   email: '',
-  room: 'dynamic-room-123'
+  room: ''
 });
 
-// Function to start the Jitsi meeting with a JWT (authenticated, moderator privileges)
+// Function to start the Jitsi meeting as an authenticated user (JWT with moderator privileges)
 const startJitsi = async () => {
   try {
     const payload = {
@@ -26,11 +26,11 @@ const startJitsi = async () => {
       body: JSON.stringify(payload),
     });
 
-    // If the response isn't OK, log error and join anonymously.
     if (!response.ok) {
       const errorData = await response.json();
       console.error("Backend error:", errorData.error);
-      return joinAnonymously();
+      alert(errorData.error);
+      return; // Do not join the meeting
     }
 
     const data = await response.json();
@@ -38,16 +38,15 @@ const startJitsi = async () => {
 
     if (!jwtToken) {
       console.error("Failed to get JWT");
-      return joinAnonymously();
+      alert("Failed to get JWT. Please try again later.");
+      return;
     }
 
     console.log("JWT received:", jwtToken);
 
-    // Show the meeting container and wait for DOM update.
     showMeeting.value = true;
     await nextTick();
 
-    // Initialize Jitsi with JWT (authenticated with moderator privileges).
     new window.JitsiMeetExternalAPI("8x8.vc", {
       roomName:
         "vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/" + formData.room,
@@ -56,31 +55,78 @@ const startJitsi = async () => {
     });
   } catch (error) {
     console.error("Error fetching JWT:", error);
-    joinAnonymously();
+    alert("An unexpected error occurred. Please try again.");
   }
 };
 
-// Fallback: join the meeting anonymously (without moderator privileges).
+// Function to join anonymously (without moderator privileges).
 const joinAnonymously = async () => {
-  console.log("Joining anonymously (no moderator privileges).");
-  showMeeting.value = true;
-  await nextTick();
+  // Ensure room name is provided. If not, prompt for one.
+  if (!formData.room.trim()) {
+    const userRoom = prompt("Please enter the room name you want to join:");
+    if (userRoom && userRoom.trim()) {
+      formData.room = userRoom.trim();
+    } else {
+      alert("Room name is required to join anonymously.");
+      return;
+    }
+  }
+  // Use dummy values for name and email for anonymous join.
+  const payload = {
+    name: "Anonymous",
+    email: "anonymous@example.com",
+    room: formData.room,
+  };
 
-  new window.JitsiMeetExternalAPI("8x8.vc", {
-    roomName:
-      "vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/" + formData.room,
-    parentNode: container.value,
-  });
+  try {
+    const response = await fetch("http://localhost:5001/generate-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Backend error:", errorData.error);
+      alert(errorData.error);
+      return;
+    }
+
+    const data = await response.json();
+    const jwtToken = data.token;
+    if (!jwtToken) {
+      alert("Failed to get token. Please try again.");
+      return;
+    }
+
+    console.log("JWT received (anonymous):", jwtToken);
+
+    showMeeting.value = true;
+    await nextTick();
+
+    new window.JitsiMeetExternalAPI("8x8.vc", {
+      roomName:
+        "vpaas-magic-cookie-90ee6c1a36b24c4396c110d15d7d80c3/" + formData.room,
+      parentNode: container.value,
+      jwt: jwtToken,
+    });
+  } catch (error) {
+    console.error("Error joining anonymously:", error);
+    alert("An error occurred. Please try again.");
+  }
 };
 
-// Handle form submission.
+// Handle form submission for authenticated join.
 const handleSubmit = (e) => {
   e.preventDefault();
+  // If room is empty, generate a default room name
+  if (!formData.room.trim()) {
+    formData.room = 'room-' + Math.random().toString(36).substring(2, 10);
+  }
   startJitsi();
 };
 
 onMounted(() => {
-  // Load the Jitsi external API script if not already loaded.
   if (!window.JitsiMeetExternalAPI) {
     const script = document.createElement("script");
     script.src =
@@ -94,7 +140,6 @@ onMounted(() => {
 
 <template>
   <div class="page-container">
-    <!-- Login form displayed before joining the meeting -->
     <div v-if="!showMeeting" class="login-form">
       <h2>Join Meeting</h2>
       <form @submit="handleSubmit">
@@ -108,22 +153,19 @@ onMounted(() => {
         </div>
         <div class="form-group">
           <label for="room">Room:</label>
-          <input type="text" v-model="formData.room" id="room" required />
+          <input type="text" v-model="formData.room" id="room" placeholder="Enter room name" required />
         </div>
-        <button type="submit">Join Meeting</button>
+        <button type="submit">Join Meeting as Authenticated User</button>
       </form>
       <div class="anonymous-link">
         <a href="#" @click.prevent="joinAnonymously()">Join anonymously?</a>
       </div>
     </div>
-
-    <!-- Jitsi container displayed after the meeting starts -->
     <div v-else ref="container" class="jaas-container"></div>
   </div>
 </template>
 
 <style scoped>
-/* Full page container for centering content */
 .page-container {
   min-height: 100vh;
   display: flex;
@@ -133,13 +175,11 @@ onMounted(() => {
   padding: 20px;
 }
 
-/* Styled login form */
 .login-form {
   background: #ffffff;
   padding: 30px 40px;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-  
   width: 400px;
   text-align: center;
 }
@@ -185,7 +225,6 @@ onMounted(() => {
   background: #0056b3;
 }
 
-/* Anonymous join link styling */
 .anonymous-link {
   margin-top: 15px;
   font-size: 0.9rem;
@@ -201,7 +240,6 @@ onMounted(() => {
   text-decoration: underline;
 }
 
-/* Jitsi container styling */
 .jaas-container {
   height: 100vh;
   width: 100%;
